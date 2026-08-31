@@ -104,11 +104,12 @@ input[type=time].in{font-variant-numeric:tabular-nums;letter-spacing:.02em}
 .quick button.primary{border-color:var(--accent);color:var(--accent-ink);background:var(--accent-soft)}
 
 /* Segment (types absence) */
-.seg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.seg{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .seg .pill{display:flex;flex-direction:column;align-items:center;gap:6px;min-height:64px;justify-content:center;border:1px solid var(--line-2);background:var(--surface-2);color:var(--ink-2);border-radius:14px;font:inherit;font-size:13px;font-weight:700;cursor:pointer;transition:.15s var(--spring)}
 .seg .pill svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:2}
 .seg .pill:active{transform:scale(.96)}
 .seg .pill[aria-pressed="true"].conge{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink)}
+.seg .pill[aria-pressed="true"].repos{border-color:var(--blue);background:var(--blue-soft);color:var(--blue)}
 .seg .pill[aria-pressed="true"].absence{border-color:var(--amber);background:var(--amber-soft);color:var(--amber)}
 .seg .pill[aria-pressed="true"].maladie{border-color:var(--danger);background:var(--danger-soft);color:var(--danger)}
 
@@ -126,11 +127,11 @@ input[type=time].in{font-variant-numeric:tabular-nums;letter-spacing:.02em}
 .cal-day.today{box-shadow:inset 0 0 0 2px var(--line-2)}
 .cal-day:active{transform:scale(.9)}
 .cal-day .mk{position:absolute;bottom:5px;left:50%;transform:translateX(-50%);width:6px;height:6px;border-radius:50%}
-.cal-day .mk.conge{background:var(--accent)}.cal-day .mk.absence{background:var(--amber)}.cal-day .mk.maladie{background:var(--danger)}.cal-day .mk.travail{background:var(--good)}.cal-day .mk.fer{background:#c9c2b6}
+.cal-day .mk.repos{background:var(--blue)}.cal-day .mk.conge{background:var(--accent)}.cal-day .mk.absence{background:var(--amber)}.cal-day .mk.maladie{background:var(--danger)}.cal-day .mk.travail{background:var(--good)}.cal-day .mk.fer{background:#c9c2b6}
 .cal-day.dim{color:#cfc9c0;cursor:default}
 .cal-day.ferie{color:var(--muted);cursor:default;background:var(--surface-2)}
 .cal-day.sel{color:#fff;border-color:transparent}
-.cal-day.sel.conge{background:var(--accent)}.cal-day.sel.absence{background:var(--amber)}.cal-day.sel.maladie{background:var(--danger)}
+.cal-day.sel.repos{background:var(--blue)}.cal-day.sel.conge{background:var(--accent)}.cal-day.sel.absence{background:var(--amber)}.cal-day.sel.maladie{background:var(--danger)}
 .cal-day.sel .mk{display:none}
 .cal-legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:14px;font-size:12px;color:var(--muted)}
 .cal-legend span{display:inline-flex;align-items:center;gap:6px}
@@ -197,7 +198,7 @@ input[type=time].in{font-variant-numeric:tabular-nums;letter-spacing:.02em}
 .day-row .ds{font-size:12px;color:var(--muted);margin-top:2px}
 .day-row .dv{font-weight:800;font-variant-numeric:tabular-nums;flex:0 0 auto}
 .day-row .dv.off{font-size:12px;text-transform:uppercase}
-.day-row .dv.off.conge{color:var(--accent-ink)}.day-row .dv.off.absence{color:var(--amber)}.day-row .dv.off.maladie{color:var(--danger)}
+.day-row .dv.off.repos{color:var(--blue)}.day-row .dv.off.conge{color:var(--accent-ink)}.day-row .dv.off.absence{color:var(--amber)}.day-row .dv.off.maladie{color:var(--danger)}
 
 .badge{display:inline-flex;align-items:center;font-size:11px;font-weight:800;padding:4px 9px;border-radius:999px;text-transform:uppercase}
 .badge.late{background:var(--amber-soft);color:var(--amber)}
@@ -366,6 +367,9 @@ window.AE_CONFIG = {
   // --- Réglages métier ---
   timezone: "Europe/Paris",
   stepMinutes: 10,                                   // défilement des minutes (10 en 10)
+  /* Historique du salarie : masque tant que le calcul des heures n'est pas
+     valide. Repasser a true pour le rouvrir, il n'y a rien d'autre a faire. */
+  historiqueSalarie: false,
   heuresAttendues: { lundi:8, mardi:8, mercredi:8, jeudi:8, vendredi:8, samedi:0, dimanche:0 },
   journeeStandard: { matineeDebut:"07:30", matineeFin:"12:00", apremDebut:"13:00", apremFin:"16:30" }
 };
@@ -377,7 +381,10 @@ window.AE_CONFIG = {
   const STEP=(CFG.stepMinutes||10)*60;
   const JOURS=["dimanche","lundi","mardi","mercredi","jeudi","vendredi","samedi"];
   const MOIS=["janvier","février","mars","avril","mai","juin","juillet","août","septembre","octobre","novembre","décembre"];
-  const ABS={conge:"Congé",absence:"Absence",maladie:"Maladie"};
+  const ABS={conge:"Congé",repos:"Repos",absence:"Absence",maladie:"Maladie"};
+  /* Journees payees sans travailler : elles comptent dans le total du mois,
+     comme dans le fichier Excel. Une absence non justifiee, non. */
+  const CREDITE={conge:true,repos:true,maladie:true,absence:false};
   const CLE="ae_identite";
   const app=document.getElementById("app");
   const who=document.getElementById("who");
@@ -388,7 +395,12 @@ window.AE_CONFIG = {
   function addDays(iso,n){const d=new Date(iso+"T12:00:00");d.setDate(d.getDate()+n);return isoOf(d);}
   function jourNom(iso){return JOURS[new Date(iso+"T12:00:00").getDay()];}
   function jourFrLong(iso){return new Date(iso+"T12:00:00").toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long",year:"numeric"});}
-  function heuresAttJour(iso){const j=jourNom(iso);return (CFG.heuresAttendues&&CFG.heuresAttendues[j]!=null)?CFG.heuresAttendues[j]:8;}
+  /* Heures dues sur une journee : 8 h du lundi au jeudi, 7 h le vendredi.
+     Le rythme est porte par la fiche du salarie. */
+  function heuresAttJour(iso){const j=jourNom(iso);
+    const h=employe&&employe.heuresSemaine;
+    if(h&&h[j]!=null)return +h[j];
+    return (CFG.heuresAttendues&&CFG.heuresAttendues[j]!=null)?CFG.heuresAttendues[j]:8;}
   function dureeH(a,b){if(!a||!b)return 0;const[ha,ma]=a.split(":").map(Number),[hb,mb]=b.split(":").map(Number);const d=((hb*60+mb)-(ha*60+ma))/60;return d>0?d:0;}
   function fmtH(h){const s=Math.round(h*100)/100;return Number.isInteger(s)?String(s):s.toFixed(2).replace(/0$/,"");}
   function fmtHU(h){return fmtH(h)+" h";}
@@ -416,6 +428,8 @@ window.AE_CONFIG = {
     conge:'<svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3.5"/></svg>',
     absence:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>',
     maladie:'<svg viewBox="0 0 24 24"><path d="M9 3h6v3h3v6h-3v3H9v-3H6V6h3z" transform="translate(0 1) scale(0.9)"/></svg>',
+    repos:'<svg viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg>',
+    compte:'<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.8"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></svg>',
     prev:'<svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>',
     next:'<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>'
   };
@@ -467,7 +481,9 @@ window.AE_CONFIG = {
     },
     // Récupère la fiche du salarié connecté
     async moi(){
-      const l=await SB.q("employes?select=id,nom,role&limit=1");
+      let l=null;
+      try{ l=await SB.q("employes?select=id,nom,role,heures_semaine,heures_mois&limit=1"); }catch(e){}
+      if(!Array.isArray(l)) l=await SB.q("employes?select=id,nom,role&limit=1");  // avant le script 20
       return (l&&l.length)?l[0]:null;
     }
   };
@@ -534,7 +550,7 @@ window.AE_CONFIG = {
         if(!a||!a.access_token){btn.disabled=false;btn.textContent="Se connecter";return toast("Identifiant ou mot de passe incorrect.",true);}
         employe={id:id.toLowerCase(),nom:id,role:"salarie",accessToken:a.access_token,refreshToken:a.refresh_token};
         const m=await SB.moi();
-        if(m){employe.id=m.id;employe.nom=m.nom;employe.role=m.role||"salarie";}
+        if(m){employe.id=m.id;employe.nom=m.nom;employe.role=m.role||"salarie";employe.heuresSemaine=m.heures_semaine||null;employe.heuresMois=m.heures_mois!=null?+m.heures_mois:null;}
         if(mem)sauverSession(employe); else effacerSession();
         horsLigne=false;demarrer();
       }catch(e){
@@ -555,7 +571,7 @@ window.AE_CONFIG = {
       const a=await SB.refresh(s.refreshToken);
       if(a&&a.access_token){
         employe=Object.assign({},s,{accessToken:a.access_token,refreshToken:a.refresh_token});
-        const m=await SB.moi(); if(m){employe.id=m.id;employe.nom=m.nom;employe.role=m.role||"salarie";}
+        const m=await SB.moi(); if(m){employe.id=m.id;employe.nom=m.nom;employe.role=m.role||"salarie";employe.heuresSemaine=m.heures_semaine||null;employe.heuresMois=m.heures_mois!=null?+m.heures_mois:null;}
         sauverSession(employe);horsLigne=false;demarrer();
       } else {
         // Jeton expire : on ouvre quand meme, en hors ligne, SANS rien effacer.
@@ -596,7 +612,8 @@ window.AE_CONFIG = {
   /* Navigation */
   function renderTabbar(){
     const nav=document.getElementById("tabbar");if(!nav)return;
-    const items=[["jour","Ma journée",IC.jour],["absences","Absences",IC.abs],["historique","Historique",IC.hist]];
+    const items=[["jour","Ma journée",IC.jour],["absences","Absences",IC.abs],
+      CFG.historiqueSalarie?["historique","Historique",IC.hist]:["historique","Mon compte",IC.compte]];
     nav.innerHTML=items.map(it=>'<button class="nav-item" data-nav="'+it[0]+'" aria-current="'+(vue===it[0])+'">'+it[2]+'<span>'+it[1]+'</span><span class="nav-dot"></span></button>').join("");
     nav.querySelectorAll(".nav-item").forEach(b=>b.addEventListener("click",()=>go(b.dataset.nav)));
   }
@@ -698,7 +715,9 @@ window.AE_CONFIG = {
     const now=new Date();
     const envoyeHeure=now.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",timeZone:CFG.timezone||"Europe/Paris"});
     const trav=statut==="travail", att=heuresAttJour(iso);
-    const hj=trav?heuresTravail():0, ht=trav?heuresTrajet():0;
+    /* Un conge, un repos ou un arret maladie est paye : la journee porte les
+       heures dues (7 h un vendredi, 8 h sinon). Jamais d'heures supp. */
+    const hj=trav?heuresTravail():(CREDITE[statut]?att:0), ht=trav?heuresTrajet():0;
     return Object.assign({
       source:"app-hk", employeId:employe.id, employeNom:employe.nom, date:iso, jourSemaine:jourNom(iso),
       statut:statut, statutLabel:ABS[statut]||"Travaillé",
@@ -833,6 +852,7 @@ window.AE_CONFIG = {
         <div class="eyebrow">Type</div>
         <div class="seg">
           <button class="pill conge" data-type="conge" aria-pressed="${calType==='conge'}">${IC.conge}Congé</button>
+          <button class="pill repos" data-type="repos" aria-pressed="${calType==='repos'}">${IC.repos}Repos</button>
           <button class="pill absence" data-type="absence" aria-pressed="${calType==='absence'}">${IC.absence}Absence</button>
           <button class="pill maladie" data-type="maladie" aria-pressed="${calType==='maladie'}">${IC.maladie}Maladie</button>
         </div>
@@ -846,6 +866,7 @@ window.AE_CONFIG = {
         <div class="cal-grid">${jours}${cells}</div>
         <div class="cal-legend">
           <span><i style="background:var(--accent)"></i>Congé</span>
+          <span><i style="background:var(--blue)"></i>Repos</span>
           <span><i style="background:var(--amber)"></i>Absence</span>
           <span><i style="background:var(--danger)"></i>Maladie</span>
           <span><i style="background:var(--good)"></i>Travaillé</span>
@@ -905,9 +926,9 @@ window.AE_CONFIG = {
     }
     if(!body)body=`<div class="empty"><div class="big">Aucune feuille en ${histYear}</div><div>L'historique s'affichera ici.</div></div>`;
     const nAtt=feuillesEnAttente().length;
-    app.innerHTML=`
-      <div class="hero"><div class="hi">Mon historique</div><div class="name" style="text-transform:none">Toutes mes heures</div></div>
-      ${horsLigne?`<div class="offline"><span class="d"></span>Hors ligne${nAtt?` — ${nAtt} feuille${nAtt>1?"s":""} en attente d'envoi`:""}</div>`:""}
+    /* Historique masque : aucun total affiche, seulement le compte.
+       Les feuilles continuent de partir normalement. */
+    const chiffres = !CFG.historiqueSalarie ? "" : `
       <div class="yr">
         <button id="y-prev" ${histYear<=minY?"disabled":""}>${IC.prev}</button>
         <div class="y">${histYear}</div>
@@ -917,8 +938,12 @@ window.AE_CONFIG = {
         <div><div style="font-size:24px;font-weight:800" class="num">${fmtHM(totTrav)}</div><div style="font-size:11.5px;color:var(--muted);font-weight:600;margin-top:3px">Total ${histYear}</div></div>
         <div><div style="font-size:24px;font-weight:800;color:var(--accent)" class="num">${totSupp>0?"+":""}${fmtHM(totSupp)}</div><div style="font-size:11.5px;color:var(--muted);font-weight:600;margin-top:3px">Heures supp</div></div>
       </div>
-      ${body}
-      <div class="sec">Mon compte</div>
+      ${body}`;
+    app.innerHTML=`
+      <div class="hero"><div class="hi">${CFG.historiqueSalarie?"Mon historique":"Mon compte"}</div><div class="name" style="text-transform:none">${CFG.historiqueSalarie?"Toutes mes heures":employe.nom}</div></div>
+      ${horsLigne?`<div class="offline"><span class="d"></span>Hors ligne${nAtt?` — ${nAtt} feuille${nAtt>1?"s":""} en attente d'envoi`:""}</div>`:""}
+      ${chiffres}
+      ${CFG.historiqueSalarie?`<div class="sec">Mon compte</div>`:""}
       <div class="panel">
         <div class="prow" style="display:flex;align-items:center;gap:14px">
           <div class="avatar2">${(employe.nom||"?").trim().charAt(0).toUpperCase()}</div>
@@ -929,7 +954,8 @@ window.AE_CONFIG = {
         </div>
         <button class="cta line" id="h-sync" style="margin-top:16px">Actualiser mes données</button>
         ${sessionExpiree?`<button class="cta" id="h-relog" style="margin-top:10px">Se reconnecter</button>`:""}
-      </div>`;
+      </div>
+      ${CFG.historiqueSalarie?"":`<div class="hint" style="text-align:center;margin-top:16px">Le récapitulatif de vos heures est en cours de mise au point. Il reviendra dans l'application.</div>`}`;
     const yp=document.getElementById("y-prev"),yn=document.getElementById("y-next");
     if(yp&&histYear>minY)yp.addEventListener("click",()=>{histYear--;renderHistorique();});
     if(yn&&histYear<maxY)yn.addEventListener("click",()=>{histYear++;renderHistorique();});
