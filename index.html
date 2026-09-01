@@ -369,7 +369,7 @@ window.AE_CONFIG = {
   stepMinutes: 10,                                   // défilement des minutes (10 en 10)
   /* Historique du salarie : masque tant que le calcul des heures n'est pas
      valide. Repasser a true pour le rouvrir, il n'y a rien d'autre a faire. */
-  historiqueSalarie: false,
+  historiqueSalarie: true,
   heuresAttendues: { lundi:8, mardi:8, mercredi:8, jeudi:8, vendredi:8, samedi:0, dimanche:0 },
   journeeStandard: { matineeDebut:"07:30", matineeFin:"12:00", apremDebut:"13:00", apremFin:"16:30" }
 };
@@ -439,6 +439,8 @@ window.AE_CONFIG = {
   function sauverSession(s){localStorage.setItem(CLE,JSON.stringify(s));}
   function effacerSession(){localStorage.removeItem(CLE);}
   let employe=null, horsLigne=false, sessionExpiree=false;
+  /* Compteur d'heures supplementaires, une ligne par mois, renvoye par la base. */
+  let BILANS=null;
 
   /* ---- Accès Supabase (API REST directe, aucune librairie externe) ---- */
   const SB={
@@ -485,6 +487,12 @@ window.AE_CONFIG = {
       try{ l=await SB.q("employes?select=id,nom,role,heures_semaine,heures_mois&limit=1"); }catch(e){}
       if(!Array.isArray(l)) l=await SB.q("employes?select=id,nom,role&limit=1");  // avant le script 20
       return (l&&l.length)?l[0]:null;
+    },
+    /* Compteur d'heures supplementaires (vue « bilans »). Les regles de
+       securite ne renvoient que les lignes du salarie connecte. */
+    async bilans(){
+      try{ const l=await SB.q("bilans?select=mois,effectives,payees,repos,credit,cumul&order=mois");
+           return Array.isArray(l)?l:[]; }catch(e){ return null; }
     }
   };
 
@@ -772,6 +780,8 @@ window.AE_CONFIG = {
   }
   async function chargerServeur(){
     if(!employe||!employe.accessToken)return;
+    /* Compteur : independant des feuilles, il ne doit pas bloquer la synchro. */
+    SB.bilans().then(b=>{ if(b){BILANS=b; if(vue==="historique")render();} });
     const LIMITE=1500;
     try{
       const lignes=await SB.q("feuilles?select=*&order=date.desc&limit="+LIMITE);
@@ -902,6 +912,39 @@ window.AE_CONFIG = {
 
   /* ---------------- HISTORIQUE ---------------- */
   function getEntries(){const pre="ae_sent_"+employe.id+"_",out=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.indexOf(pre)===0){try{const p=JSON.parse(localStorage.getItem(k));p.iso=k.slice(pre.length);out.push(p);}catch(e){}}}return out;}
+  function moisPrec(ym){const y=+ym.slice(0,4),m=+ym.slice(5,7),d=new Date(y,m-2,1);
+    return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");}
+  function nomMois(ym){const d=new Date(ym+"-01T12:00:00");
+    return MOIS[d.getMonth()].toLowerCase()+" "+d.getFullYear();}
+
+  /* Les cinq lignes du bas du classeur, telles quelles, sur le mois en cours.
+     « Heures effectives » n'y figure pas : le salarie a deja le total du mois
+     juste en dessous, mois par mois. */
+  function compteurSupp(){
+    if(!BILANS||!BILANS.length)return "";
+    const ym=todayISO().slice(0,7);
+    const avec=BILANS.filter(b=>b.mois<=ym && b.credit!=null);
+    const b=avec.length?avec[avec.length-1]:null;
+    if(!b)return "";
+    const k=BILANS.findIndex(x=>x.mois===b.mois);
+    const prec=k>0?+BILANS[k-1].cumul:0;
+    const enCours=b.mois===ym;
+    const sg=v=>(v>0?"+":"")+fmtHM(v);
+    const li=(t,v,o)=>{o=o||{};return `<div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:11px 0${o.trait?";border-top:1px solid var(--line)":""}">
+        <span style="font-size:13.5px;font-weight:${o.fort?800:600};color:${o.fort?"var(--ink)":"var(--muted)"}">${t}</span>
+        <span style="font-weight:800;font-size:${o.gros?"19px":"15px"}${o.couleur?";color:"+o.couleur:""};white-space:nowrap">${v}</span></div>`;};
+    return `
+      <div class="sec">Mes heures supplémentaires</div>
+      <div class="panel">
+        ${li("Repos à déduire", +b.repos>0?"-"+fmtHM(+b.repos):"—", {couleur:+b.repos>0?"var(--blue)":""})}
+        ${li("Heures payées + HS", fmtHM(+b.payees), {trait:true})}
+        ${li("TOTAL CRÉDIT D'HEURES SUR LE MOIS", sg(+b.credit), {trait:true,fort:true,couleur:+b.credit<0?"var(--danger)":"var(--accent)"})}
+        ${li("Reste du mois précédent", sg(prec), {trait:true})}
+        ${li("Cumul à créditer sur mois suivant", sg(+b.cumul), {trait:true,fort:true,gros:true,couleur:+b.cumul<0?"var(--danger)":"var(--accent)"})}
+        ${enCours?`<div style="color:var(--muted);font-size:12px;padding:2px 0 6px">${cap(MOIS[+b.mois.slice(5,7)-1].toLowerCase())} n'est pas fini : les deux derniers montants bougeront encore.</div>`:""}
+      </div>`;
+  }
+
   function renderHistorique(){
     const all=getEntries();
     const annees=Array.from(new Set(all.map(e=>e.iso.slice(0,4)))).sort();
@@ -909,41 +952,55 @@ window.AE_CONFIG = {
     if(histYear==null)histYear=curY;
     const minY=annees.length?+annees[0]:curY, maxY=Math.max(curY,annees.length?+annees[annees.length-1]:curY);
     const ejahr=all.filter(e=>e.iso.slice(0,4)===String(histYear));
-    let totTrav=0,totSupp=0; ejahr.forEach(e=>{if(e.statut==="travail"){totTrav+=e.heuresTotal||((e.heuresJournee||0)+(e.heuresTrajet||0));totSupp+=e.heuresSupp||0;}});
-    // grouper par mois
+
+    /* Comme au classeur : heures travaillees + journees payees sans
+       travailler. Le trajet compte a part. */
+    let totEff=0, totTrajet=0;
+    ejahr.forEach(e=>{ totEff+=e.heuresJournee||0;
+                       if(e.statut==="travail") totTrajet+=e.heuresTrajet||0; });
+
     let body="";
     for(let m=11;m>=0;m--){
       const mm=String(m+1).padStart(2,"0");
       const list=ejahr.filter(e=>e.iso.slice(5,7)===mm).sort((a,b)=>b.iso.localeCompare(a.iso));
       if(!list.length)continue;
-      let mt=0; list.forEach(e=>{if(e.statut==="travail")mt+=e.heuresTotal||((e.heuresJournee||0)+(e.heuresTrajet||0));});
+      let mt=0; list.forEach(e=>{ mt+=e.heuresJournee||0; });
       const rows=list.map(e=>{const d=new Date(e.iso+"T12:00:00");
-        const val=e.statut==="travail"?`<span class="dv">${fmtHU(e.heuresTotal||((e.heuresJournee||0)+(e.heuresTrajet||0)))}</span>`:`<span class="dv off ${e.statut}">${e.statutLabel}</span>`;
-        const sub=e.statut==="travail"?(e.heuresSupp>0?"+"+fmtHM(e.heuresSupp)+" supp":"trajet inclus")+(e._pending?" · en attente d'envoi":""):"Journée déclarée";
+        const val=e.statut==="travail"
+          ? `<span class="dv">${fmtHM(e.heuresJournee||0)}</span>`
+          : `<span class="dv off ${e.statut}">${e.statutLabel}</span>`;
+        const bouts=[];
+        if(e.statut==="travail"){
+          if(e.chantier) bouts.push(e.chantier);
+          if(e.heuresTrajet>0) bouts.push("trajet "+fmtHM(e.heuresTrajet));
+        } else bouts.push("journée payée");
+        if(e._pending) bouts.push("en attente d'envoi");
         return `<div class="day-row"><div class="dd"><div class="n">${d.getDate()}</div><div class="w">${JOURS[d.getDay()].slice(0,3)}</div></div>
-          <div class="di"><div class="dt">${jourNom(e.iso)}</div><div class="ds">${sub}</div></div>${val}</div>`;}).join("");
-      body+=`<div class="mois-h"><span class="mn">${MOIS[m]}</span><span class="mt">${fmtHU(mt)}</span></div><div class="panel" style="padding:6px 20px">${rows}</div>`;
+          <div class="di"><div class="dt">${jourNom(e.iso)}</div><div class="ds">${bouts.join(" · ")||"—"}</div></div>${val}</div>`;}).join("");
+      body+=`<div class="mois-h"><span class="mn">${MOIS[m]}</span><span class="mt">${fmtHM(mt)}</span></div><div class="panel" style="padding:6px 20px">${rows}</div>`;
     }
     if(!body)body=`<div class="empty"><div class="big">Aucune feuille en ${histYear}</div><div>L'historique s'affichera ici.</div></div>`;
     const nAtt=feuillesEnAttente().length;
-    /* Historique masque : aucun total affiche, seulement le compte.
-       Les feuilles continuent de partir normalement. */
+
     const chiffres = !CFG.historiqueSalarie ? "" : `
       <div class="yr">
         <button id="y-prev" ${histYear<=minY?"disabled":""}>${IC.prev}</button>
         <div class="y">${histYear}</div>
         <button id="y-next" ${histYear>=maxY?"disabled":""}>${IC.next}</button>
       </div>
+      <div class="sec">Mes heures, mois par mois</div>
       <div class="panel" style="display:flex;justify-content:space-around;text-align:center">
-        <div><div style="font-size:24px;font-weight:800" class="num">${fmtHM(totTrav)}</div><div style="font-size:11.5px;color:var(--muted);font-weight:600;margin-top:3px">Total ${histYear}</div></div>
-        <div><div style="font-size:24px;font-weight:800;color:var(--accent)" class="num">${totSupp>0?"+":""}${fmtHM(totSupp)}</div><div style="font-size:11.5px;color:var(--muted);font-weight:600;margin-top:3px">Heures supp</div></div>
+        <div><div style="font-size:24px;font-weight:800" class="num">${fmtHM(totEff)}</div><div style="font-size:11.5px;color:var(--muted);font-weight:600;margin-top:3px">Heures ${histYear}</div></div>
+        <div><div style="font-size:24px;font-weight:800" class="num">${fmtHM(totTrajet)}</div><div style="font-size:11.5px;color:var(--muted);font-weight:600;margin-top:3px">Trajet ${histYear}</div></div>
       </div>
+      ${compteurSupp()}
+      <div class="sec">Le détail de mes journées</div>
       ${body}`;
     app.innerHTML=`
       <div class="hero"><div class="hi">${CFG.historiqueSalarie?"Mon historique":"Mon compte"}</div><div class="name" style="text-transform:none">${CFG.historiqueSalarie?"Toutes mes heures":employe.nom}</div></div>
       ${horsLigne?`<div class="offline"><span class="d"></span>Hors ligne${nAtt?` — ${nAtt} feuille${nAtt>1?"s":""} en attente d'envoi`:""}</div>`:""}
       ${chiffres}
-      ${CFG.historiqueSalarie?`<div class="sec">Mon compte</div>`:""}
+      <div class="sec">Mon compte</div>
       <div class="panel">
         <div class="prow" style="display:flex;align-items:center;gap:14px">
           <div class="avatar2">${(employe.nom||"?").trim().charAt(0).toUpperCase()}</div>
@@ -960,7 +1017,7 @@ window.AE_CONFIG = {
     if(yp&&histYear>minY)yp.addEventListener("click",()=>{histYear--;renderHistorique();});
     if(yn&&histYear<maxY)yn.addEventListener("click",()=>{histYear++;renderHistorique();});
     const hr=document.getElementById("h-relog");
-    if(hr)hr.addEventListener("click",()=>{ renderLogin(employe?employe.id:""); });  // ne touche PAS aux donnees locales
+    if(hr)hr.addEventListener("click",()=>{ renderLogin(employe?employe.id:""); });
     const hs=document.getElementById("h-sync");
     if(hs)hs.addEventListener("click",async()=>{hs.disabled=true;hs.textContent="Actualisation…";await synchroniser();if(!horsLigne)toast("Données à jour");renderHistorique();});
   }
