@@ -139,6 +139,15 @@ input[type=time].in{font-variant-numeric:tabular-nums;letter-spacing:.02em}
 
 /* Calendrier */
 .cal-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.moitie{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.moitie button{min-height:50px;border:1px solid var(--line-2);background:var(--surface-2);color:var(--ink-2);font:inherit;font-size:13px;font-weight:700;border-radius:12px;cursor:pointer;padding:6px 4px;line-height:1.25}
+.moitie button[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink)}
+.moitie .h{display:block;font-size:11px;font-weight:600;opacity:.6;margin-top:3px}
+.demi-rappel{background:var(--accent-soft);border:1px solid var(--accent);border-radius:var(--radius-lg);padding:16px 18px;margin-top:12px}
+.demi-rappel .t{font-weight:800;font-size:14px;color:var(--accent-ink)}
+.demi-rappel .s{font-size:12.5px;line-height:1.5;color:var(--accent-ink);opacity:.82;margin-top:5px}
+.tp-effacer{display:block;width:100%;min-height:46px;margin:0;border:1px solid var(--line-2);background:var(--surface-2);border-radius:12px;font:inherit;font-size:14px;font-weight:700;color:var(--ink-2);cursor:pointer}
+.tp-pied{padding:12px 14px;border-top:1px solid var(--line)}
 .cal-nav .m{font-weight:800;font-size:17px;text-transform:capitalize}
 .cal-nav button{width:40px;height:40px;border-radius:12px;border:1px solid var(--line-2);background:var(--surface-2);color:var(--ink-2);display:flex;align-items:center;justify-content:center;cursor:pointer}
 .cal-nav button:active{transform:scale(.92)}
@@ -559,12 +568,14 @@ window.AE_CONFIG = {
       trajet_retour_depart:h(p.trajetRetourDepart), trajet_retour_arrivee:h(p.trajetRetourArrivee),
       heures_journee:p.heuresJournee||0, heures_trajet:p.heuresTrajet||0, heures_total:p.heuresTotal||0,
       heures_attendues:p.heuresAttendues||0, heures_supp:p.heuresSupp||0,
+      statut_matin:p.statutMatin||null, statut_aprem:p.statutAprem||null,
       chantier:p.chantier||"", commentaire:p.commentaire||"", envoye_le:p.envoyeLe||new Date().toISOString() };
   }
   function hhmm(t){ return t?String(t).slice(0,5):""; }
   function depuisDB(r){
     return { employeId:r.employe_id, employeNom:employe?employe.nom:"", date:r.date,
       statut:r.statut, statutLabel:r.statut_label,
+      statutMatin:r.statut_matin||"", statutAprem:r.statut_aprem||"",
       matineeDebut:hhmm(r.matinee_debut), matineeFin:hhmm(r.matinee_fin),
       apresMidiDebut:hhmm(r.apres_midi_debut), apresMidiFin:hhmm(r.apres_midi_fin),
       trajetAllerDepart:hhmm(r.trajet_aller_depart), trajetAllerArrivee:hhmm(r.trajet_aller_arrivee),
@@ -648,6 +659,8 @@ window.AE_CONFIG = {
 
   /* État */
   let vue="jour", state, calYear, calMonth, calSel, calType="conge", histYear;
+  /* Portee d'une absence : journee entiere, matin ou apres-midi. */
+  let calDemi="jour";
   /* ---------- Brouillon : la saisie en cours survit à la fermeture de l'app ---------- */
   let brouillonRepris=false;
   function cleBrouillon(){ return "ae_draft_"+employe.id; }
@@ -666,7 +679,35 @@ window.AE_CONFIG = {
   function resetJour(){ const std=CFG.journeeStandard;
     state.matineeDebut=std.matineeDebut;state.matineeFin=std.matineeFin;state.apremDebut=std.apremDebut;state.apremFin=std.apremFin;
     state.trajetAllerDep="";state.trajetAllerArr="";state.trajetRetourDep="";state.trajetRetourArr="";state.chantier="";state.commentaire=""; }
-  function heuresTravail(){ return dureeH(state.matineeDebut,state.matineeFin)+dureeH(state.apremDebut,state.apremFin); }
+  /* ---- demi-journees ----
+     Une seule des deux moities renseignee = celle-la est posee, l'autre reste
+     a saisir. Les deux vides = journee ordinaire. Les deux remplies = finie. */
+  function demiPosee(p){
+    if(!p) return null;
+    const m=p.statutMatin||"", a=p.statutAprem||"";
+    if(m && !a) return {quand:"matin", type:m};
+    if(a && !m) return {quand:"aprem", type:a};
+    return null;
+  }
+  function demiDuJour(){
+    try{ const raw=localStorage.getItem(sentKey(state.date));
+         return raw?demiPosee(JSON.parse(raw)):null; }catch(e){ return null; }
+  }
+  function demiMot(q){ return q==="matin"?"matin":"après-midi"; }
+  /* « le matin » mais « l'après-midi » : l'article s'élide. */
+  function demiArt(q,maj){ const a=q==="matin"?"le matin":"l'après-midi";
+    return maj?a.charAt(0).toUpperCase()+a.slice(1):a; }
+  function creditDemi(iso,type){ return CREDITE[type]?heuresAttJour(iso)/2:0; }
+  /* Les horaires de la moitie absente sont ignores, meme si un brouillon en
+     gardait : sinon elle serait comptee deux fois. */
+  function horaires(){
+    const r={md:state.matineeDebut,mf:state.matineeFin,ad:state.apremDebut,af:state.apremFin}, d=demiDuJour();
+    if(d&&d.quand==="matin"){ r.md=""; r.mf=""; }
+    if(d&&d.quand==="aprem"){ r.ad=""; r.af=""; }
+    return r;
+  }
+  function heuresTravail(){ const h=horaires(), d=demiDuJour();
+    return dureeH(h.md,h.mf)+dureeH(h.ad,h.af)+(d?creditDemi(state.date,d.type):0); }
   function heuresTrajet(){ return dureeH(state.trajetAllerDep,state.trajetAllerArr)+dureeH(state.trajetRetourDep,state.trajetRetourArr); }
   function heuresTotal(){ return heuresTravail()+heuresTrajet(); }
 
@@ -689,7 +730,10 @@ window.AE_CONFIG = {
   /* ---------------- MA JOURNÉE ---------------- */
   function renderJour(){
     const deja=localStorage.getItem(sentKey(state.date));
-    if(deja){ app.innerHTML=doneView(JSON.parse(deja)); bindDone(); return; }
+    /* Une demi-journee posee ne termine pas la journee : on reaffiche le
+       formulaire pour que l'autre moitie soit saisie. */
+    const dj = demiDuJour();
+    if(deja && !dj){ app.innerHTML=doneView(JSON.parse(deja)); bindDone(); return; }
     CHAMPS_HEURE.forEach(k=>{ state[k]=auQuart(state[k]); });
     const tot=heuresTotal();
     app.innerHTML=`
@@ -700,10 +744,14 @@ window.AE_CONFIG = {
         <input type="date" class="date-input" id="f-date" value="${state.date}" max="${todayISO()}">
       </div>
       ${brouillonRepris?`<div class="offline" style="background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink)"><span class="d" style="background:var(--accent)"></span>Saisie reprise là où vous l'aviez laissée</div>`:""}
+      ${dj?`<div class="demi-rappel">
+        <div class="t">${cap(ABS[dj.type]||dj.type)} ${demiArt(dj.quand)} · ${fmtHM(creditDemi(state.date,dj.type))} comptées</div>
+        <div class="s">Déclaré depuis l'onglet Absences. Remplissez votre ${demiMot(dj.quand==="matin"?"aprem":"matin")} ci-dessous.</div>
+      </div>`:""}
       <div class="panel">
         <div class="eyebrow">Horaires</div>
-        ${paire("Matin — début","f-md",state.matineeDebut,"Matin — fin","f-mf",state.matineeFin)}
-        <div class="mt">${paire("Après-midi — début","f-ad",state.apremDebut,"Après-midi — fin","f-af",state.apremFin)}</div>
+        ${dj&&dj.quand==="matin"?"":paire("Matin — début","f-md",state.matineeDebut,"Matin — fin","f-mf",state.matineeFin)}
+        <div class="${dj&&dj.quand==="matin"?"":"mt"}">${dj&&dj.quand==="aprem"?"":paire("Après-midi — début","f-ad",state.apremDebut,"Après-midi — fin","f-af",state.apremFin)}</div>
         <div class="quick"><button class="primary" id="q-std">Journée standard · 8 h</button><button id="q-clr">Vider</button></div>
       </div>
       <div class="panel">
@@ -781,11 +829,14 @@ window.AE_CONFIG = {
           <div class="tp-col" id="tp-h"><div class="pad"></div>${heures}<div class="pad"></div></div>
           <span class="tp-sep">:</span>
           <div class="tp-col" id="tp-m"><div class="pad"></div>${mins.join("")}<div class="pad"></div></div>
-        </div></div>`;
+        </div>
+        <div class="tp-pied"><button class="tp-effacer" id="tp-del">Effacer cette heure</button></div>
+        </div>`;
       document.body.appendChild(ov);
       ov.addEventListener("click",e=>{ if(e.target===ov) fermerHeure(); });
       document.getElementById("tp-x").addEventListener("click",fermerHeure);
       document.getElementById("tp-ok").addEventListener("click",validerHeure);
+      document.getElementById("tp-del").addEventListener("click",effacerHeure);
       ["tp-h","tp-m"].forEach(c=>{const col=document.getElementById(c);
         let t; col.addEventListener("scroll",()=>{clearTimeout(t);t=setTimeout(()=>tpMarque(col),60);});});
     }
@@ -817,6 +868,12 @@ window.AE_CONFIG = {
     const el=document.getElementById(tpChamp);
     if(el){ el.textContent=val; el.classList.remove("vide"); }
     majTot(); fermerHeure();
+  }
+  /* Vider un horaire deja saisi : c'est ce qui permet de ne remplir qu'une
+     seule demi-journee apres coup. */
+  function effacerHeure(){
+    if(tpCible){ state[tpCible]=""; sauverBrouillon(); }
+    fermerHeure(); render();
   }
   function fermerHeure(){
     const ov=document.getElementById("tp-ov"); if(!ov)return;
@@ -861,7 +918,7 @@ window.AE_CONFIG = {
   function buildPayload(iso,statut,extra){
     const now=new Date();
     const envoyeHeure=now.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",timeZone:CFG.timezone||"Europe/Paris"});
-    const trav=statut==="travail", att=heuresAttJour(iso);
+    const trav=statut==="travail", att=heuresAttJour(iso), dj=demiDuJour(), hx=horaires();
     /* Un conge, un repos ou un arret maladie est paye : la journee porte les
        heures dues (7 h un vendredi, 8 h sinon). Jamais d'heures supp. */
     const hj=trav?heuresTravail():(CREDITE[statut]?att:0), ht=trav?heuresTrajet():0;
@@ -869,13 +926,32 @@ window.AE_CONFIG = {
       source:"app-hk", employeId:employe.id, employeNom:employe.nom, date:iso, jourSemaine:jourNom(iso),
       statut:statut, statutLabel:ABS[statut]||"Travaillé",
       chantier:trav?String(state.chantier||"").replace(/["\\\r\n]/g," ").slice(0,60):"", trajetAllerDepart:trav?state.trajetAllerDep:"", trajetAllerArrivee:trav?state.trajetAllerArr:"",
-      matineeDebut:trav?state.matineeDebut:"", matineeFin:trav?state.matineeFin:"", apresMidiDebut:trav?state.apremDebut:"", apresMidiFin:trav?state.apremFin:"",
+      matineeDebut:trav?hx.md:"", matineeFin:trav?hx.mf:"", apresMidiDebut:trav?hx.ad:"", apresMidiFin:trav?hx.af:"",
       trajetRetourDepart:trav?state.trajetRetourDep:"", trajetRetourArrivee:trav?state.trajetRetourArr:"",
       heuresJournee:Math.round(hj*100)/100, heuresTrajet:Math.round(ht*100)/100, heuresTotal:Math.round((hj+ht)*100)/100,
+      statutMatin: trav?(dj?(dj.quand==="matin"?dj.type:"travail"):""):"",
+      statutAprem: trav?(dj?(dj.quand==="aprem"?dj.type:"travail"):""):"",
       heuresAttendues:att, heuresSupp:trav?Math.round((hj+ht-att)*100)/100:0,
       commentaire:trav?String(state.commentaire||"").replace(/["\\\r\n]/g," ").slice(0,200):"", envoyeLe:now.toISOString(), _envoyeHeure:envoyeHeure
     }, extra||{});
   }
+  /* Absence posee sur une seule moitie : l'autre reste NULL, donc le rappel
+     du soir continue de sonner tant que la journee n'est pas envoyee. */
+  function buildPayloadDemi(iso,type,quand){
+    const now=new Date(), att=heuresAttJour(iso), credit=creditDemi(iso,type);
+    return {
+      source:"app-ae", employeId:employe.id, employeNom:employe.nom, date:iso, jourSemaine:jourNom(iso),
+      statut:"travail", statutLabel:"Travaillé",
+      statutMatin: quand==="matin"?type:"", statutAprem: quand==="aprem"?type:"",
+      chantier:"", trajetAllerDepart:"", trajetAllerArrivee:"",
+      matineeDebut:"", matineeFin:"", apresMidiDebut:"", apresMidiFin:"",
+      trajetRetourDepart:"", trajetRetourArrivee:"",
+      heuresJournee:Math.round(credit*100)/100, heuresTrajet:0,
+      heuresTotal:Math.round(credit*100)/100,
+      heuresAttendues:att, heuresSupp:0, commentaire:"", envoyeLe:now.toISOString()
+    };
+  }
+
   async function envoyer(p, onErr){
     const cle="ae_sent_"+employe.id+"_"+p.date;
     try{
@@ -995,6 +1071,8 @@ window.AE_CONFIG = {
     }
     const jours=["L","M","M","J","V","S","D"].map(j=>`<div class="cal-hd">${j}</div>`).join("");
     const n=calSel.size;
+    /* Heures affichees : celles du premier jour choisi, sinon aujourd'hui. */
+    const attDemi=heuresAttJour(calSel.size?Array.from(calSel).sort()[0]:todayISO());
     app.innerHTML=`
       <div class="hero"><div class="hi">Déclarer une absence</div><div class="name" style="text-transform:none">Congés & absences</div></div>
       <div class="panel">
@@ -1005,6 +1083,15 @@ window.AE_CONFIG = {
           <button class="pill absence" data-type="absence" aria-pressed="${calType==='absence'}">${IC.absence}Absence</button>
           <button class="pill maladie" data-type="maladie" aria-pressed="${calType==='maladie'}">${IC.maladie}Maladie</button>
         </div>
+      </div>
+      <div class="panel">
+        <div class="eyebrow">Combien</div>
+        <div class="moitie">
+          <button data-demi="jour"  aria-pressed="${calDemi==='jour'}">Journée<span class="h">${fmtHM(attDemi)}</span></button>
+          <button data-demi="matin" aria-pressed="${calDemi==='matin'}">Matin<span class="h">${fmtHM(attDemi/2)}</span></button>
+          <button data-demi="aprem" aria-pressed="${calDemi==='aprem'}">Après-midi<span class="h">${fmtHM(attDemi/2)}</span></button>
+        </div>
+        ${calDemi!=='jour'?`<div class="hint" style="margin-top:12px">${demiArt(calDemi,true)} est posé en ${ABS[calType].toLowerCase()} et compte ${fmtHM(attDemi/2)}. L'autre demi-journée reste à saisir dans « Ma journée ».</div>`:""}
       </div>
       <div class="panel">
         <div class="cal-nav">
@@ -1023,11 +1110,12 @@ window.AE_CONFIG = {
         </div>
         <div class="hint">Samedis, dimanches et jours fériés non sélectionnables. La semaine va du lundi au vendredi.</div>
       </div>
-      <button class="btn-send" id="abs-ok" ${n?"":"disabled"}>Déclarer ${n?(n+" jour"+(n>1?"s":"")+" en "+ABS[calType].toLowerCase()):"— sélectionnez des jours"}</button>`;
+      <button class="btn-send" id="abs-ok" ${n?"":"disabled"}>${n?("Déclarer "+n+" "+(calDemi==="jour"?("jour"+(n>1?"s":"")):(demiMot(calDemi)+(n>1?"s":"")))+" en "+ABS[calType].toLowerCase()):"Déclarer — sélectionnez des jours"}</button>`;
     bindAbsences();
   }
   function bindAbsences(){
     document.querySelectorAll(".seg .pill[data-type]").forEach(b=>b.addEventListener("click",()=>{calType=b.dataset.type;renderAbsences();renderTabbar();}));
+    document.querySelectorAll(".moitie [data-demi]").forEach(b=>b.addEventListener("click",()=>{calDemi=b.dataset.demi;renderAbsences();renderTabbar();}));
     document.getElementById("cal-prev").addEventListener("click",()=>{calMonth--;if(calMonth<0){calMonth=11;calYear--;}renderAbsences();renderTabbar();});
     document.getElementById("cal-next").addEventListener("click",()=>{calMonth++;if(calMonth>11){calMonth=0;calYear++;}renderAbsences();renderTabbar();});
     document.querySelectorAll(".cal-day[data-iso]").forEach(c=>c.addEventListener("click",()=>{const iso=c.dataset.iso;if(calSel.has(iso))calSel.delete(iso);else calSel.add(iso);renderAbsences();renderTabbar();}));
@@ -1038,9 +1126,14 @@ window.AE_CONFIG = {
     const jours=Array.from(calSel).sort();const type=calType;
     const btn=document.getElementById("abs-ok");btn.disabled=true;btn.textContent="Envoi…";
     let ok=0;
-    for(const iso of jours){ const p=buildPayload(iso,type); const r=await envoyerSilencieux(p); if(r)ok++; }
+    const demi=calDemi;
+    for(const iso of jours){
+      const p = demi==="jour" ? buildPayload(iso,type) : buildPayloadDemi(iso,type,demi);
+      const r=await envoyerSilencieux(p); if(r)ok++;
+    }
     calSel.clear();
-    toast(ok+" jour"+(ok>1?"s":"")+" déclaré"+(ok>1?"s":"")+" en "+ABS[type].toLowerCase());
+    const mot = demi==="jour" ? ("jour"+(ok>1?"s":"")) : (demiMot(demi)+(ok>1?"s":""));
+    toast(ok+" "+mot+" déclaré"+(ok>1?"s":"")+" en "+ABS[type].toLowerCase());
     renderAbsences();renderTabbar();
   }
   async function envoyerSilencieux(p){
