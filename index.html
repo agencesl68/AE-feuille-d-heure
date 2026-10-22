@@ -716,7 +716,9 @@ window.AE_CONFIG = {
   function heuresTravail(){ const h=horaires(), d=demiDuJour();
     return dureeH(h.md,h.mf)+dureeH(h.ad,h.af)+(d?creditDemi(state.date,d.type):0); }
   function heuresTrajet(){ return dureeH(state.trajetAllerDep,state.trajetAllerArr)+dureeH(state.trajetRetourDep,state.trajetRetourArr); }
-  function heuresTotal(){ return heuresTravail()+heuresTrajet(); }
+  /* La journee se calcule sur le seul onglet Horaires. Le trajet est releve
+     pour la direction mais ne s'ajoute jamais aux heures comptees. */
+  function heuresTotal(){ return heuresTravail(); }
 
   /* Navigation */
   function renderTabbar(){
@@ -775,7 +777,7 @@ window.AE_CONFIG = {
       <div class="ledger">
         <div class="k">Total de la journée</div>
         <div class="big num" id="r-tot">${fmtHM(tot)}</div>
-        <div class="note">trajet inclus</div>
+        <div class="note">trajet non compté</div>
       </div>
       <button class="btn-send" id="f-send">${IC.check}Envoyer</button>`;
     bindJour();
@@ -935,10 +937,10 @@ window.AE_CONFIG = {
       chantier:trav?String(state.chantier||"").replace(/["\\\r\n]/g," ").slice(0,60):"", trajetAllerDepart:trav?state.trajetAllerDep:"", trajetAllerArrivee:trav?state.trajetAllerArr:"",
       matineeDebut:trav?hx.md:"", matineeFin:trav?hx.mf:"", apresMidiDebut:trav?hx.ad:"", apresMidiFin:trav?hx.af:"",
       trajetRetourDepart:trav?state.trajetRetourDep:"", trajetRetourArrivee:trav?state.trajetRetourArr:"",
-      heuresJournee:Math.round(hj*100)/100, heuresTrajet:Math.round(ht*100)/100, heuresTotal:Math.round((hj+ht)*100)/100,
+      heuresJournee:Math.round(hj*100)/100, heuresTrajet:Math.round(ht*100)/100, heuresTotal:Math.round(hj*100)/100,
       statutMatin: trav?(dj?(dj.quand==="matin"?dj.type:"travail"):""):"",
       statutAprem: trav?(dj?(dj.quand==="aprem"?dj.type:"travail"):""):"",
-      heuresAttendues:att, heuresSupp:trav?Math.round((hj+ht-att)*100)/100:0,
+      heuresAttendues:att, heuresSupp:trav?Math.round((hj-att)*100)/100:0,
       commentaire:trav?String(state.commentaire||"").replace(/["\\\r\n]/g," ").slice(0,200):"", envoyeLe:now.toISOString(), _envoyeHeure:envoyeHeure
     }, extra||{});
   }
